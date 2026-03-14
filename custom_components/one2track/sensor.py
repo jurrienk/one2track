@@ -114,9 +114,11 @@ SENSOR_DESCRIPTIONS: tuple[One2TrackSensorDescription, ...] = (
         key="steps_today",
         translation_key="steps_today",
         native_unit_of_measurement="steps",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:shoe-print",
-        value_fn=lambda d: _loc(d).get("step_count_day"),
+        value_fn=lambda d: v
+        if (v := _loc(d).get("step_count_day")) is not None
+        else _meta(d).get("steps"),
     ),
     One2TrackSensorDescription(
         key="accuracy",
@@ -140,6 +142,8 @@ SENSOR_DESCRIPTIONS: tuple[One2TrackSensorDescription, ...] = (
     One2TrackSensorDescription(
         key="status",
         translation_key="status",
+        device_class=SensorDeviceClass.ENUM,
+        options=["gps", "wifi", "offline"],
         icon="mdi:access-point-network",
         value_fn=lambda d: str(v).lower() if (v := d.get("status")) else None,
     ),

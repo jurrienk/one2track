@@ -143,9 +143,23 @@ class One2TrackCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         return base
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
-        """Fetch device states from One2Track."""
+        """Fetch device states from One2Track.
+
+        Refreshes both the JSON device list (for base data like battery,
+        timestamps, simcard) and the HTML-scraped data (for richer fields).
+        Even if HTML scraping fails, entities stay fresh via the JSON data.
+        """
         try:
             async with asyncio.timeout(60):
+                # Refresh base device data from JSON API
+                try:
+                    self._device_list = await self.client.async_discover_devices()
+                except One2TrackApiClientAuthenticationError:
+                    raise
+                except One2TrackApiClientError:
+                    LOGGER.debug("JSON device refresh failed, keeping cached list")
+
+                # Scrape HTML for additional detail per device
                 return await self.client.async_get_all_device_states()
         except One2TrackApiClientAuthenticationError as exc:
             raise ConfigEntryAuthFailed(exc) from exc

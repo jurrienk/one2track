@@ -384,6 +384,9 @@ class One2TrackApiClient:
             if i < len(labels):
                 label = re.sub(r"<[^>]+>", "", labels[i]).strip()
                 label = unescape(label)
+                # Normalize whitespace — scraped labels may contain \n and
+                # other whitespace artifacts from the HTML layout
+                label = re.sub(r"\s+", " ", label).strip()
             checked = "checked" in attrs
             options.append({"value": value, "label": label, "checked": checked})
 
@@ -423,24 +426,38 @@ class One2TrackApiClient:
         return self._parse_device_page(html, uuid)
 
     def _parse_device_page(self, html: str, uuid: str) -> dict[str, Any]:
-        """Extract device and last_location from inline JS vars."""
-        result: dict[str, Any] = {}
+        """Extract device and last_location from inline JS vars.
 
-        device_match = re.search(r"var device\s*=\s*(\{.*?\})\s*;", html, re.DOTALL)
+        Uses raw_decode to properly handle nested JSON objects (the old
+        non-greedy regex stopped at the first '}', breaking on nested
+        objects like meta_data).
+        """
+        result: dict[str, Any] = {}
+        decoder = json.JSONDecoder()
+
+        device_match = re.search(r"var device\s*=\s*", html)
         if device_match:
             try:
-                result["device"] = json.loads(device_match.group(1))
-            except json.JSONDecodeError:
-                pass
+                result["device"], _ = decoder.raw_decode(html, device_match.end())
+            except (json.JSONDecodeError, ValueError):
+                LOGGER.debug("Could not parse 'var device' JSON for %s", uuid)
 
-        location_match = re.search(
-            r"var last_location\s*=\s*(\{.*?\})\s*;", html, re.DOTALL
-        )
+        location_match = re.search(r"var last_location\s*=\s*", html)
         if location_match:
             try:
-                result["last_location"] = json.loads(location_match.group(1))
-            except json.JSONDecodeError:
-                pass
+                result["last_location"], _ = decoder.raw_decode(
+                    html, location_match.end()
+                )
+            except (json.JSONDecodeError, ValueError):
+                LOGGER.debug(
+                    "Could not parse 'var last_location' JSON for %s", uuid
+                )
+
+        if not result:
+            LOGGER.warning(
+                "HTML scraping returned no data for %s — page structure may have changed",
+                uuid,
+            )
 
         return result
 
@@ -588,9 +605,19 @@ class One2TrackApiClient:
         except Exception as exc:  # noqa: BLE001
             result["html_scraped_error"] = str(exc)
 
-        # 3. Discovered capabilities
+        # 3. Discovered capabilities (with options for radio commands)
         try:
+            from .const import RADIO_COMMANDS
+
             caps = await self.async_discover_capabilities(uuid)
+            functions = caps.get("functions", {})
+            options: dict[str, list] = {}
+            for code in RADIO_COMMANDS:
+                if code in functions:
+                    opts = await self.async_discover_command_options(uuid, code)
+                    if opts:
+                        options[code] = opts
+            caps["options"] = options
             result["capabilities"] = caps
         except Exception as exc:  # noqa: BLE001
             result["capabilities_error"] = str(exc)
