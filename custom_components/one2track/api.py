@@ -120,6 +120,10 @@ class One2TrackApiClient:
 
         if resp.status == 302 and "Set-Cookie" in resp.headers:
             self._cookie = self._parse_cookie(resp)
+            if not self._cookie:
+                raise One2TrackApiClientAuthenticationError(
+                    f"Login succeeded but session cookie '{SESSION_COOKIE}' not found in response"
+                )
         else:
             raise One2TrackApiClientAuthenticationError(
                 "Invalid username or password"
@@ -221,9 +225,29 @@ class One2TrackApiClient:
                 f"Device list returned {resp.status}"
             )
 
-        data = await resp.json(content_type=None)
-        devices = [item["device"] for item in data]
-        self._device_uuids = [d["uuid"] for d in devices]
+        # The server may return HTML (login page) instead of JSON when
+        # the session is invalid, even with a 200 status code.
+        body = await resp.text()
+        if not body or body.lstrip().startswith(("<", "<!DOCTYPE")):
+            self._cookie = ""
+            raise One2TrackApiClientAuthenticationError(
+                "Device list returned HTML instead of JSON — session likely expired"
+            )
+
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Device list returned invalid JSON: {body[:200]}"
+            ) from exc
+
+        try:
+            devices = [item["device"] for item in data]
+            self._device_uuids = [d["uuid"] for d in devices]
+        except (KeyError, TypeError) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Unexpected device list structure: {exc}"
+            ) from exc
         return devices
 
     # ── Device State (HTML scraping) ────────────────────────────────
@@ -404,8 +428,10 @@ class One2TrackApiClient:
 
     @staticmethod
     def _parse_cookie(response: aiohttp.ClientResponse) -> str:
-        set_cookie = response.headers.get("Set-Cookie", "")
-        if SESSION_COOKIE in set_cookie:
-            part = set_cookie.split(SESSION_COOKIE + "=")[1]
-            return part.split(";")[0]
+        # Check ALL Set-Cookie headers — aiohttp sends multiple and
+        # headers.get() only returns the first one.
+        for set_cookie in response.headers.getall("Set-Cookie", []):
+            if SESSION_COOKIE in set_cookie:
+                part = set_cookie.split(SESSION_COOKIE + "=")[1]
+                return part.split(";")[0]
         return ""

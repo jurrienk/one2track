@@ -44,6 +44,9 @@ class One2TrackConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except One2TrackApiClientError as exc:
                 LOGGER.exception(exc)
                 _errors["base"] = "unknown"
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Unexpected error during credential test: %s", exc)
+                _errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(account_id)
                 self._abort_if_unique_id_configured()
