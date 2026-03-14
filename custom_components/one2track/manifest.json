@@ -1,7 +1,7 @@
 {
   "domain": "one2track",
   "name": "One2Track",
-  "codeowners": ["@vandernorth", "@jurrienk"],
+  "codeowners": ["@jurrienk"],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/jurrienk/one2track",
@@ -10,6 +10,6 @@
   "issue_tracker": "https://github.com/jurrienk/one2track/issues",
   "requirements": [],
   "ssdp": [],
-  "version": "2.0.2",
+  "version": "3.0.0",
   "zeroconf": []
 }

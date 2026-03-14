@@ -1,32 +1,4 @@
-send_device_command:
-  name: Send device command
-  description: Send an arbitrary command to a One2Track device
-  target:
-    entity:
-      integration: one2track
-      domain: device_tracker
-  fields:
-    cmd_code:
-      name: Command code
-      description: The function code to send (e.g. "0039" for positioning mode)
-      required: true
-      example: "0039"
-      selector:
-        text:
-    cmd_value:
-      name: Command value
-      description: Optional value parameter for the command
-      required: false
-      example: ""
-      selector:
-        text:
-    cmd_value_param:
-      name: Command value parameter
-      description: Optional additional parameter for the command
-      required: false
-      example: ""
-      selector:
-        text:
+# ── Action services ───────────────────────────────────────────────
 
 send_message:
   name: Send message
@@ -45,8 +17,190 @@ send_message:
         text:
 
 force_update:
-  name: Force update
-  description: Activate positioning mode on a One2Track device for ~2 minutes
+  name: Refresh location
+  description: Activate high-frequency GPS mode on the device for ~2 minutes
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+
+intercom:
+  name: Intercom (call)
+  description: Make the watch immediately call the specified phone number
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    phone_number:
+      name: Phone number
+      description: The phone number the watch will call (international format)
+      required: true
+      example: "0031612345678"
+      selector:
+        text:
+
+# ── Setting services ─────────────────────────────────────────────
+
+send_device_command:
+  name: Send device command
+  description: Send an arbitrary command to a One2Track device
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    cmd_code:
+      name: Command code
+      description: "The function code to send (e.g. 0039 for positioning mode)"
+      required: true
+      example: "0039"
+      selector:
+        text:
+    cmd_values:
+      name: Command values
+      description: "Optional list of values for the command (sent as function[cmd_value][] entries)"
+      required: false
+      example: "['0031612345678']"
+      selector:
+        object:
+
+set_sos_number:
+  name: Set SOS number
+  description: Set the emergency phone number called when the SOS button is pressed
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    phone_number:
+      name: Phone number
+      description: Phone number in international format
+      required: true
+      example: "0031612345678"
+      selector:
+        text:
+
+set_alarms:
+  name: Set alarms
+  description: "Set alarms on the watch. Format per alarm: HH:MM-STATUS-MODE[-DDDDDDD]"
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    alarms:
+      name: Alarms
+      description: "List of alarm strings. Example: 07:00-1-2 (daily at 07:00). Send empty list to clear."
+      required: false
+      example: "['07:00-1-2', '08:30-1-3-1111100']"
+      selector:
+        object:
+
+set_phonebook:
+  name: Set phonebook
+  description: Set named contacts stored on the watch
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    contacts:
+      name: Contacts
+      description: "List of contacts with name and number. Send empty list to clear."
+      required: false
+      example: "[{'name': 'Papa', 'number': '0031612345678'}]"
+      selector:
+        object:
+
+set_whitelist:
+  name: Set whitelist
+  description: Set phone numbers allowed to call the watch (up to 10 numbers)
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    phone_numbers:
+      name: Phone numbers
+      description: List of up to 10 phone numbers. Use empty string to clear a slot.
+      required: true
+      selector:
+        object:
+
+set_quiet_times:
+  name: Set quiet times
+  description: Set time windows during which the watch is silent (max 3)
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    windows:
+      name: Quiet windows
+      description: "List of time windows with start and end (HH:MM format). Send empty list to clear."
+      required: false
+      example: "[{'start': '22:00', 'end': '07:00'}]"
+      selector:
+        object:
+
+set_language_timezone:
+  name: Set language & timezone
+  description: "Set the watch language and timezone"
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    language:
+      name: Language
+      description: "Language code: 1=English, 5=German, 16=Dutch"
+      required: true
+      example: "16"
+      selector:
+        select:
+          options:
+            - label: English
+              value: "1"
+            - label: German
+              value: "5"
+            - label: Dutch
+              value: "16"
+    utc_offset:
+      name: UTC offset
+      description: "UTC offset as float string (e.g. 1.0 for CET, 2.0 for CEST)"
+      required: true
+      example: "1.0"
+      selector:
+        text:
+
+change_password:
+  name: Change device password
+  description: Change the 6-digit PIN on the watch
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    password:
+      name: Password
+      description: New 6-digit PIN
+      required: true
+      example: "123456"
+      selector:
+        text:
+
+factory_reset:
+  name: Factory reset
+  description: "Reset the device to factory defaults. WARNING: This cannot be undone!"
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+
+remote_shutdown:
+  name: Remote shutdown
+  description: "Power off the watch remotely. WARNING: Cannot be turned back on via the app!"
   target:
     entity:
       integration: one2track

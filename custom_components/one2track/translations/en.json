@@ -47,17 +47,19 @@
             "altitude": {
                 "name": "Altitude"
             },
-            "steps": {
-                "name": "Steps"
+            "steps_today": {
+                "name": "Steps today"
             },
             "accuracy": {
                 "name": "GPS accuracy"
             },
+            "heading": {
+                "name": "Heading"
+            },
             "status": {
                 "name": "Status",
                 "state": {
-                    "gps": "GPS",
-                    "wifi": "WiFi",
+                    "online": "Online",
                     "offline": "Offline"
                 }
             }
@@ -65,6 +67,27 @@
         "binary_sensor": {
             "tumble": {
                 "name": "Fall detected"
+            }
+        },
+        "button": {
+            "refresh_location": {
+                "name": "Refresh location"
+            },
+            "find_device": {
+                "name": "Find device"
+            }
+        },
+        "switch": {
+            "step_counter": {
+                "name": "Step counter"
+            }
+        },
+        "select": {
+            "gps_interval": {
+                "name": "GPS tracking interval"
+            },
+            "profile_mode": {
+                "name": "Profile mode"
             }
         }
     }
