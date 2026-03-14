@@ -10,6 +10,7 @@ import json
 import re
 import socket
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 import async_timeout
@@ -148,9 +149,17 @@ class One2TrackApiClient:
             ) from exc
 
         if resp.status == 302 and "Location" in resp.headers:
-            parts = resp.headers["Location"].split("/")
-            if len(parts) >= 3:
-                self._account_id = parts[2]
+            location = resp.headers["Location"]
+            # Extract path from Location header (handles both absolute and
+            # relative URLs).  Absolute example:
+            #   https://www.one2trackgps.com/users/12345/devices
+            # Relative example:
+            #   /users/12345/devices
+            parsed = urlparse(location)
+            path_parts = [p for p in parsed.path.split("/") if p]
+            # Expect path like /users/<account_id>/...
+            if len(path_parts) >= 2:
+                self._account_id = path_parts[1]
                 return
         raise One2TrackApiClientAuthenticationError(
             "Could not discover account ID after login"
