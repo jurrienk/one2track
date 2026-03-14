@@ -163,6 +163,31 @@ class GpsClient():
         response = await self.call_api(url, data=data, extra_headers=headers)
         return response.status == 200
 
+    async def send_device_command(self, device_uuid: str, cmd_code: str, cmd_value: str | None = None, cmd_value_param: str | None = None) -> bool:
+        """Send an arbitrary command to a One2Track device."""
+        await self._ensure_authenticated()
+        csrf = await self._get_csrf_token()
+
+        url = f"https://www.one2trackgps.com/api/devices/{device_uuid}/functions"
+
+        headers = {
+            "x-csrf-token": csrf,
+            "x-requested-with": "XMLHttpRequest",
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        }
+
+        data = {
+            "utf8": "\u2713",
+            "function[code]": cmd_code,
+        }
+        if cmd_value is not None:
+            data["function[value]"] = cmd_value
+        if cmd_value_param is not None:
+            data["function[value_param]"] = cmd_value_param
+
+        response = await self.call_api(url, data=data, extra_headers=headers)
+        return response.status == 200
+
     async def force_update(self, device_uuid: str) -> bool:
         """Activate positioning mode on the device for ~2 minutes."""
         await self._ensure_authenticated()

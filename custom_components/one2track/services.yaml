@@ -1,3 +1,33 @@
+send_device_command:
+  name: Send device command
+  description: Send an arbitrary command to a One2Track device
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+  fields:
+    cmd_code:
+      name: Command code
+      description: The function code to send (e.g. "0039" for positioning mode)
+      required: true
+      example: "0039"
+      selector:
+        text:
+    cmd_value:
+      name: Command value
+      description: Optional value parameter for the command
+      required: false
+      example: ""
+      selector:
+        text:
+    cmd_value_param:
+      name: Command value parameter
+      description: Optional additional parameter for the command
+      required: false
+      example: ""
+      selector:
+        text:
+
 send_message:
   name: Send message
   description: Send a text message to a One2Track device

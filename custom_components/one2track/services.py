@@ -13,6 +13,7 @@ LOGGER = logging.getLogger(__name__)
 
 SERVICE_SEND_MESSAGE = "send_message"
 SERVICE_FORCE_UPDATE = "force_update"
+SERVICE_SEND_DEVICE_COMMAND = "send_device_command"
 ATTR_MESSAGE = "message"
 
 
@@ -94,6 +95,35 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             if coordinator:
                 await coordinator.async_request_refresh()
 
+    async def handle_send_device_command(call: ServiceCall) -> None:
+        entity_ids = call.data.get("entity_id", [])
+        if isinstance(entity_ids, str):
+            entity_ids = [entity_ids]
+
+        cmd_code = call.data["cmd_code"]
+        cmd_value = call.data.get("cmd_value")
+        cmd_value_param = call.data.get("cmd_value_param")
+
+        device_uuid = _resolve_device_uuid(hass, entity_ids)
+        client = _get_client_for_uuid(hass, device_uuid)
+
+        LOGGER.info("Sending device command %s to %s", cmd_code, device_uuid)
+        success = await client.send_device_command(device_uuid, cmd_code, cmd_value, cmd_value_param)
+        if not success:
+            raise HomeAssistantError("Failed to send device command to One2Track device")
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SEND_DEVICE_COMMAND,
+        handle_send_device_command,
+        schema=vol.Schema({
+            vol.Required("entity_id"): vol.Any(str, [str]),
+            vol.Required("cmd_code"): str,
+            vol.Optional("cmd_value"): str,
+            vol.Optional("cmd_value_param"): str,
+        }),
+    )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_SEND_MESSAGE,
@@ -116,5 +146,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
 async def async_unload_services(hass: HomeAssistant) -> None:
     """Unload One2Track services."""
+    hass.services.async_remove(DOMAIN, SERVICE_SEND_DEVICE_COMMAND)
     hass.services.async_remove(DOMAIN, SERVICE_SEND_MESSAGE)
     hass.services.async_remove(DOMAIN, SERVICE_FORCE_UPDATE)
