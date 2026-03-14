@@ -34,7 +34,7 @@ These have caused regressions before — do not change without understanding:
 
 4. **Account ID extraction:** The login redirect URL is absolute (`https://www.one2trackgps.com/users/12345/devices`), parse with `urlparse` — don't naively split on `/`.
 
-5. **`balance_cents` API field contains euros**, not cents. Don't divide by 100. The attribute is named `balance_eur`.
+5. **`balance_cents` API field contains cents.** Divide by 100 for euros. The attribute is exposed as `balance_eur` (converted).
 
 6. **Services must accept `device_id`, `entity_id`, and `area_id`** — HA's automation editor defaults to device_id targeting.
 

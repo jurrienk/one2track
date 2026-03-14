@@ -127,9 +127,11 @@ def _resolve_device(
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:
-    """Register One2Track services."""
-    if hass.services.has_service(DOMAIN, SERVICE_SEND_MESSAGE):
-        return
+    """Register One2Track services.
+
+    Always re-registers all services (async_register is idempotent) so that
+    upgrading from an older version replaces old handlers immediately.
+    """
 
     # ── Action: Send message ──────────────────────────────────────
 

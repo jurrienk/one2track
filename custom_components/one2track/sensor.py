@@ -58,7 +58,7 @@ SENSOR_DESCRIPTIONS: tuple[One2TrackSensorDescription, ...] = (
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
         icon="mdi:sim",
-        value_fn=lambda d: round(float(c), 2)
+        value_fn=lambda d: round(float(c) / 100, 2)
         if (c := d.get("simcard", {}).get("balance_cents")) is not None
         else None,
     ),
@@ -114,7 +114,7 @@ SENSOR_DESCRIPTIONS: tuple[One2TrackSensorDescription, ...] = (
         key="steps_today",
         translation_key="steps_today",
         native_unit_of_measurement="steps",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:shoe-print",
         value_fn=lambda d: _loc(d).get("step_count_day"),
     ),
@@ -133,9 +133,10 @@ SENSOR_DESCRIPTIONS: tuple[One2TrackSensorDescription, ...] = (
         native_unit_of_measurement="\u00b0",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:compass",
-        value_fn=lambda d: _meta(d).get("course")
-        if _loc(d).get("satellite_count", 0) and _loc(d).get("satellite_count", 0) > 0
-        else None,
+        value_fn=lambda d: float(v) if (
+            int(_loc(d).get("satellite_count") or 0) > 0
+            and (v := _meta(d).get("course")) is not None
+        ) else None,
     ),
     One2TrackSensorDescription(
         key="status",
