@@ -11,36 +11,49 @@ DEFAULT_UPDATE_INTERVAL_SECONDS = 60
 BASE_URL = "https://www.one2trackgps.com"
 LOGIN_URL = f"{BASE_URL}/auth/users/sign_in"
 SESSION_COOKIE = "_iadmin"
+# The portal may also use "_session_id" on some deployments; we check both.
+SESSION_COOKIE_ALT = "_session_id"
 
-# Command codes — actions (perform something on the watch)
+# ── Command codes — actions (universal, all models) ──────────────
 CMD_REFRESH_LOCATION = "0039"
 CMD_FIND_DEVICE = "1015"
-CMD_INTERCOM = "0084"
 
-# Command codes — settings (change a watch setting)
+# ── Command codes — settings (universal, all models) ─────────────
 CMD_SOS_NUMBER = "0001"
 CMD_FACTORY_RESET = "0011"
 CMD_REMOTE_SHUTDOWN = "0048"
 CMD_ALARMS = "0057"
-CMD_CHANGE_PASSWORD = "0067"
-CMD_GPS_INTERVAL = "0078"
-CMD_STEP_COUNTER = "0079"
-CMD_WHITELIST_1 = "0080"
-CMD_WHITELIST_2 = "0081"
 CMD_LANGUAGE_TIMEZONE = "0124"
 CMD_QUIET_TIMES = "1107"
-CMD_PROFILE_MODE = "1116"
 CMD_PHONEBOOK = "1315"
 
-# GPS interval options (api_value -> display_label)
-GPS_INTERVAL_OPTIONS = {
+# ── Command codes — model-specific ───────────────────────────────
+# These differ per watch model. The integration discovers which code
+# each device actually supports at init time.
+CMD_INTERCOM = "0084"           # Connect MOVE only
+CMD_CHANGE_PASSWORD = "0067"    # Connect MOVE only
+CMD_WHITELIST_1 = "0080"        # Connect MOVE only
+CMD_WHITELIST_2 = "0081"        # Connect MOVE only
+
+# GPS interval: MOVE uses 0078, UP uses 0077
+GPS_INTERVAL_CODES = ("0077", "0078")
+# Step counter: MOVE uses 0079, UP uses 0082
+STEP_COUNTER_CODES = ("0079", "0082")
+# Profile/scene mode
+CMD_PROFILE_MODE = "1116"
+
+# Commands whose options should be discovered dynamically from the portal
+# (radio button forms that vary per model/firmware)
+RADIO_COMMANDS = GPS_INTERVAL_CODES + (CMD_PROFILE_MODE,)
+
+# Fallback options (only used if dynamic discovery fails)
+GPS_INTERVAL_OPTIONS_FALLBACK = {
     "10": "10 seconds (high battery usage)",
     "300": "5 minutes (medium battery usage)",
     "600": "10 minutes (low battery usage)",
 }
 
-# Profile mode options (api_value -> display_label)
-PROFILE_MODE_OPTIONS = {
+PROFILE_MODE_OPTIONS_FALLBACK = {
     "1": "Vibrate & Sound",
     "2": "Sound only",
     "3": "Vibrate only",

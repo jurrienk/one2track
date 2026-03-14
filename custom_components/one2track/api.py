@@ -1,7 +1,11 @@
 """One2Track API client.
 
 Communicates with www.one2trackgps.com via session-based authentication,
-HTML scraping for device state, and form POSTs for commands.
+HTML scraping for device state, and form PATCHes for commands.
+
+Command format (reverse engineered from the Rails portal):
+  POST /devices/{uuid}/functions
+  Body: _method=patch, authenticity_token, function[cmd_code], function[cmd_value][]
 """
 
 from __future__ import annotations
@@ -9,13 +13,14 @@ from __future__ import annotations
 import json
 import re
 import socket
+from html import unescape
 from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
 import async_timeout
 
-from .const import BASE_URL, LOGIN_URL, SESSION_COOKIE
+from .const import BASE_URL, LOGIN_URL, LOGGER, SESSION_COOKIE, SESSION_COOKIE_ALT
 
 
 class One2TrackApiClientError(Exception):
@@ -44,6 +49,7 @@ class One2TrackApiClient:
         self._password = password
         self._session = session
         self._cookie: str = ""
+        self._cookie_name: str = SESSION_COOKIE  # determined at login
         self._csrf: str = ""
         self._account_id: str = ""
         self._device_uuids: list[str] = []
@@ -56,12 +62,7 @@ class One2TrackApiClient:
     # ── Authentication ──────────────────────────────────────────────
 
     async def async_authenticate(self) -> str:
-        """Full login flow. Returns account_id.
-
-        Raises:
-            One2TrackApiClientAuthenticationError: If credentials are invalid.
-            One2TrackApiClientCommunicationError: If network errors occur.
-        """
+        """Full login flow. Returns account_id."""
         await self._async_fetch_csrf()
         await self._async_login()
         await self._async_discover_account_id()
@@ -90,7 +91,10 @@ class One2TrackApiClient:
             )
         html = await resp.text()
         self._csrf = self._parse_csrf(html)
-        self._cookie = self._parse_cookie(resp)
+        cookie, name = self._parse_cookie(resp)
+        self._cookie = cookie
+        if name:
+            self._cookie_name = name
 
     async def _async_login(self) -> None:
         """Submit login form."""
@@ -120,10 +124,13 @@ class One2TrackApiClient:
             ) from exc
 
         if resp.status == 302 and "Set-Cookie" in resp.headers:
-            self._cookie = self._parse_cookie(resp)
+            cookie, name = self._parse_cookie(resp)
+            if name:
+                self._cookie_name = name
+            self._cookie = cookie
             if not self._cookie:
                 raise One2TrackApiClientAuthenticationError(
-                    f"Login succeeded but session cookie '{SESSION_COOKIE}' not found in response"
+                    "Login succeeded but session cookie not found in response"
                 )
         else:
             raise One2TrackApiClientAuthenticationError(
@@ -150,14 +157,8 @@ class One2TrackApiClient:
 
         if resp.status == 302 and "Location" in resp.headers:
             location = resp.headers["Location"]
-            # Extract path from Location header (handles both absolute and
-            # relative URLs).  Absolute example:
-            #   https://www.one2trackgps.com/users/12345/devices
-            # Relative example:
-            #   /users/12345/devices
             parsed = urlparse(location)
             path_parts = [p for p in parsed.path.split("/") if p]
-            # Expect path like /users/<account_id>/...
             if len(path_parts) >= 2:
                 self._account_id = path_parts[1]
                 return
@@ -189,9 +190,11 @@ class One2TrackApiClient:
                 "Could not refresh CSRF token"
             )
         html = await resp.text()
-        new_cookie = self._parse_cookie(resp)
-        if new_cookie:
-            self._cookie = new_cookie
+        cookie, name = self._parse_cookie(resp)
+        if cookie:
+            self._cookie = cookie
+        if name:
+            self._cookie_name = name
         self._csrf = self._parse_csrf(html)
         return self._csrf
 
@@ -234,8 +237,6 @@ class One2TrackApiClient:
                 f"Device list returned {resp.status}"
             )
 
-        # The server may return HTML (login page) instead of JSON when
-        # the session is invalid, even with a 200 status code.
         body = await resp.text()
         if not body or body.lstrip().startswith(("<", "<!DOCTYPE")):
             self._cookie = ""
@@ -258,6 +259,135 @@ class One2TrackApiClient:
                 f"Unexpected device list structure: {exc}"
             ) from exc
         return devices
+
+    # ── Capability Discovery ────────────────────────────────────────
+
+    async def async_discover_capabilities(self, uuid: str) -> dict[str, Any]:
+        """Discover available commands for a device.
+
+        Fetches GET /devices/{uuid}/functions?list_only=true and parses
+        the HTML for function links.
+
+        Returns:
+            {
+                "functions": {"0001": "SOS nummer", "0078": "GPS tracking", ...},
+                "options": {"0078": [{"value": "300", "label": "...", "checked": False}]}
+            }
+        """
+        await self._async_ensure_authenticated()
+        url = f"{BASE_URL}/devices/{uuid}/functions?list_only=true"
+
+        try:
+            async with async_timeout.timeout(15):
+                resp = await self._session.get(url, cookies=self._cookies())
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Timeout discovering capabilities for {uuid}"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error discovering capabilities for {uuid}: {exc}"
+            ) from exc
+
+        if resp.status in (401, 302):
+            self._cookie = ""
+            raise One2TrackApiClientAuthenticationError("Session expired")
+        if resp.status != 200:
+            LOGGER.warning(
+                "Capability discovery for %s returned %s, skipping",
+                uuid, resp.status,
+            )
+            return {"functions": {}, "options": {}}
+
+        html = await resp.text()
+        functions = self._parse_functions_list(html)
+        LOGGER.debug(
+            "Discovered %d functions for %s: %s",
+            len(functions), uuid, list(functions.keys()),
+        )
+        return {"functions": functions, "options": {}}
+
+    async def async_discover_command_options(
+        self, uuid: str, cmd_code: str
+    ) -> list[dict[str, Any]]:
+        """Discover radio-button options for a specific command.
+
+        Fetches GET /devices/{uuid}/functions?function={code}&list_only=true&modal=true
+        and parses radio inputs + labels.
+
+        Returns list of {"value": "300", "label": "Every 5 min...", "checked": bool}
+        """
+        await self._async_ensure_authenticated()
+        url = (
+            f"{BASE_URL}/devices/{uuid}/functions"
+            f"?function={cmd_code}&list_only=true&modal=true"
+        )
+
+        try:
+            async with async_timeout.timeout(15):
+                resp = await self._session.get(url, cookies=self._cookies())
+        except (TimeoutError, aiohttp.ClientError, socket.gaierror) as exc:
+            LOGGER.warning(
+                "Could not discover options for cmd %s on %s: %s",
+                cmd_code, uuid, exc,
+            )
+            return []
+
+        if resp.status != 200:
+            return []
+
+        html = await resp.text()
+        options = self._parse_command_options(html)
+        LOGGER.debug(
+            "Discovered %d options for cmd %s on %s: %s",
+            len(options), cmd_code, uuid, options,
+        )
+        return options
+
+    @staticmethod
+    def _parse_functions_list(html: str) -> dict[str, str]:
+        """Parse function links from the functions list HTML.
+
+        Looks for <a href="...?function=XXXX...">Label</a> patterns.
+        """
+        functions: dict[str, str] = {}
+        for match in re.finditer(
+            r'href="[^"]*function=(\d+)[^"]*"[^>]*>(.*?)</a>',
+            html,
+            re.DOTALL,
+        ):
+            code = match.group(1)
+            label = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+            label = unescape(label)
+            functions[code] = label
+        return functions
+
+    @staticmethod
+    def _parse_command_options(html: str) -> list[dict[str, Any]]:
+        """Parse radio inputs from a command options modal.
+
+        Looks for <input type="radio" name="function[cmd_value][]" value="X">
+        followed by <label>text</label>.
+        """
+        options: list[dict[str, Any]] = []
+        # Find all radio inputs with their values and checked state
+        radios = re.findall(
+            r'<input[^>]*type="radio"[^>]*name="function\[cmd_value\]\[\]"'
+            r'[^>]*value="([^"]*)"([^>]*)>',
+            html,
+        )
+        # Find all labels (same order as radios)
+        labels = re.findall(r"<label[^>]*>(.*?)</label>", html, re.DOTALL)
+
+        for i, (value, attrs) in enumerate(radios):
+            label = ""
+            if i < len(labels):
+                label = re.sub(r"<[^>]+>", "", labels[i]).strip()
+                label = unescape(label)
+            checked = "checked" in attrs
+            options.append({"value": value, "label": label, "checked": checked})
+
+        return options
 
     # ── Device State (HTML scraping) ────────────────────────────────
 
@@ -345,19 +475,25 @@ class One2TrackApiClient:
     ) -> bool:
         """Send a command to a device.
 
-        Uses POST /api/devices/{uuid}/functions with form-encoded data.
+        Uses PATCH /devices/{uuid}/functions (Rails form convention).
+        Body: _method=patch, authenticity_token, function[cmd_code],
+              function[cmd_value][] (repeated for each value).
         """
         await self._async_ensure_authenticated()
         csrf = await self._async_refresh_csrf()
 
-        url = f"{BASE_URL}/api/devices/{uuid}/functions"
+        url = f"{BASE_URL}/devices/{uuid}/functions"
 
-        form_data: dict[str, str] = {
-            "utf8": "\u2713",
-            "function[code]": cmd_code,
-        }
+        # Build form data as list of tuples to allow repeated keys
+        form_data: list[tuple[str, str]] = [
+            ("utf8", "\u2713"),
+            ("_method", "patch"),
+            ("authenticity_token", csrf),
+            ("function[cmd_code]", cmd_code),
+        ]
         if cmd_values:
-            form_data["function[value]"] = ",".join(cmd_values)
+            for val in cmd_values:
+                form_data.append(("function[cmd_value][]", val))
 
         try:
             async with async_timeout.timeout(15):
@@ -366,7 +502,6 @@ class One2TrackApiClient:
                     data=form_data,
                     headers={
                         "x-csrf-token": csrf,
-                        "x-requested-with": "XMLHttpRequest",
                         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
                     },
                     cookies=self._cookies(),
@@ -420,13 +555,7 @@ class One2TrackApiClient:
     # ── Raw data (for diagnostics / testing) ───────────────────────
 
     async def async_get_raw_device_data(self, uuid: str) -> dict[str, Any]:
-        """Fetch raw live data for a device from all sources.
-
-        Returns a dict with:
-        - json_api: raw device data from the JSON discovery endpoint
-        - html_scraped: device + last_location from the HTML page
-        - account_id: the resolved account ID
-        """
+        """Fetch raw live data for a device from all sources."""
         await self._async_ensure_authenticated()
 
         result: dict[str, Any] = {"account_id": self._account_id}
@@ -459,6 +588,13 @@ class One2TrackApiClient:
         except Exception as exc:  # noqa: BLE001
             result["html_scraped_error"] = str(exc)
 
+        # 3. Discovered capabilities
+        try:
+            caps = await self.async_discover_capabilities(uuid)
+            result["capabilities"] = caps
+        except Exception as exc:  # noqa: BLE001
+            result["capabilities_error"] = str(exc)
+
         return result
 
     # ── Helpers ─────────────────────────────────────────────────────
@@ -466,7 +602,7 @@ class One2TrackApiClient:
     def _cookies(self) -> dict[str, str]:
         cookies = {"accepted_cookies": "true"}
         if self._cookie:
-            cookies[SESSION_COOKIE] = self._cookie
+            cookies[self._cookie_name] = self._cookie
         return cookies
 
     @staticmethod
@@ -480,11 +616,15 @@ class One2TrackApiClient:
         raise One2TrackApiClientAuthenticationError("CSRF token not found")
 
     @staticmethod
-    def _parse_cookie(response: aiohttp.ClientResponse) -> str:
-        # Check ALL Set-Cookie headers — aiohttp sends multiple and
-        # headers.get() only returns the first one.
-        for set_cookie in response.headers.getall("Set-Cookie", []):
-            if SESSION_COOKIE in set_cookie:
-                part = set_cookie.split(SESSION_COOKIE + "=")[1]
-                return part.split(";")[0]
-        return ""
+    def _parse_cookie(response: aiohttp.ClientResponse) -> tuple[str, str]:
+        """Parse session cookie from response.
+
+        Checks for both _iadmin and _session_id cookie names.
+        Returns (cookie_value, cookie_name) or ("", "") if not found.
+        """
+        for cookie_name in (SESSION_COOKIE, SESSION_COOKIE_ALT):
+            for set_cookie in response.headers.getall("Set-Cookie", []):
+                if cookie_name in set_cookie:
+                    part = set_cookie.split(cookie_name + "=")[1]
+                    return part.split(";")[0], cookie_name
+        return "", ""

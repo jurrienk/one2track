@@ -160,7 +160,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # ── Action: Intercom (make watch call a number) ───────────────
 
     async def handle_intercom(call: ServiceCall) -> None:
-        uuid, client, _ = _resolve_device(hass, call)
+        uuid, client, coordinator = _resolve_device(hass, call)
+        if not coordinator.device_supports(uuid, CMD_INTERCOM):
+            raise HomeAssistantError(
+                f"Device {uuid} does not support intercom (command {CMD_INTERCOM})"
+            )
         phone = call.data["phone_number"]
         LOGGER.info("Initiating intercom call from %s to %s", uuid, phone)
         if not await client.async_send_command(uuid, CMD_INTERCOM, [phone]):
@@ -207,7 +211,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # ── Setting: Whitelist ────────────────────────────────────────
 
     async def handle_set_whitelist(call: ServiceCall) -> None:
-        uuid, client, _ = _resolve_device(hass, call)
+        uuid, client, coordinator = _resolve_device(hass, call)
+        if not coordinator.device_supports(uuid, CMD_WHITELIST_1):
+            raise HomeAssistantError(
+                f"Device {uuid} does not support whitelist (Connect MOVE only)"
+            )
         numbers = call.data.get("phone_numbers", [])
         padded = (numbers + [""] * 10)[:10]
         if not await client.async_send_command(uuid, CMD_WHITELIST_1, padded[:5]):
@@ -243,7 +251,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # ── Setting: Change password ──────────────────────────────────
 
     async def handle_change_password(call: ServiceCall) -> None:
-        uuid, client, _ = _resolve_device(hass, call)
+        uuid, client, coordinator = _resolve_device(hass, call)
+        if not coordinator.device_supports(uuid, CMD_CHANGE_PASSWORD):
+            raise HomeAssistantError(
+                f"Device {uuid} does not support password change (Connect MOVE only)"
+            )
         password = call.data["password"]
         LOGGER.warning("Changing password for device %s", uuid)
         if not await client.async_send_command(uuid, CMD_CHANGE_PASSWORD, [password]):
@@ -271,8 +283,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         uuid, client, coordinator = _resolve_device(hass, call)
         LOGGER.info("Fetching raw live data for %s", uuid)
         raw = await client.async_get_raw_device_data(uuid)
-        # Also include current coordinator state for comparison
         raw["coordinator_data"] = coordinator.get_device_data(uuid)
+        raw["discovered_capabilities"] = coordinator.get_capabilities(uuid)
         return raw
 
     # ── Shared target keys (allow entity_id / device_id / area_id) ──

@@ -1,17 +1,21 @@
-"""Select platform for One2Track — setting selectors."""
+"""Select platform for One2Track — setting selectors.
+
+GPS interval and profile mode selects are created dynamically based on
+each device's discovered capabilities (command codes and option values
+differ per watch model).
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.components.select import SelectEntity, SelectEntityDescription
+from homeassistant.components.select import SelectEntity
 
 from .const import (
-    CMD_GPS_INTERVAL,
     CMD_PROFILE_MODE,
-    GPS_INTERVAL_OPTIONS,
-    PROFILE_MODE_OPTIONS,
+    GPS_INTERVAL_CODES,
+    GPS_INTERVAL_OPTIONS_FALLBACK,
+    PROFILE_MODE_OPTIONS_FALLBACK,
 )
 from .entity import One2TrackEntity
 
@@ -23,64 +27,112 @@ if TYPE_CHECKING:
     from .data import One2TrackConfigEntry
 
 
-@dataclass(frozen=True, kw_only=True)
-class One2TrackSelectDescription(SelectEntityDescription):
-    """Describes a One2Track select entity."""
-
-    cmd_code: str
-    value_map: dict[str, str]  # {api_value: display_label}
-
-
-SELECT_DESCRIPTIONS: tuple[One2TrackSelectDescription, ...] = (
-    One2TrackSelectDescription(
-        key="gps_interval",
-        translation_key="gps_interval",
-        icon="mdi:map-marker-distance",
-        cmd_code=CMD_GPS_INTERVAL,
-        value_map=GPS_INTERVAL_OPTIONS,
-    ),
-    One2TrackSelectDescription(
-        key="profile_mode",
-        translation_key="profile_mode",
-        icon="mdi:bell-cog",
-        cmd_code=CMD_PROFILE_MODE,
-        value_map=PROFILE_MODE_OPTIONS,
-    ),
-)
-
-
 async def async_setup_entry(
     hass: HomeAssistant,  # noqa: ARG001
     entry: One2TrackConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up One2Track setting selects."""
+    """Set up One2Track setting selects based on discovered capabilities."""
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(
-        One2TrackSelect(coordinator, device["uuid"], desc)
-        for device in coordinator.device_list
-        for desc in SELECT_DESCRIPTIONS
-    )
+    entities: list[SelectEntity] = []
+
+    for device in coordinator.device_list:
+        uuid = device["uuid"]
+
+        # GPS interval — discover which code this device uses (0077 or 0078)
+        gps_code = coordinator.device_find_code(uuid, GPS_INTERVAL_CODES)
+        if gps_code:
+            discovered_opts = coordinator.get_command_options(uuid, gps_code)
+            if discovered_opts:
+                value_map = {
+                    o["value"]: o["label"] for o in discovered_opts
+                }
+                current = next(
+                    (o["label"] for o in discovered_opts if o.get("checked")),
+                    None,
+                )
+            else:
+                value_map = GPS_INTERVAL_OPTIONS_FALLBACK
+                current = None
+            entities.append(
+                One2TrackDynamicSelect(
+                    coordinator, uuid,
+                    key="gps_interval",
+                    translation_key="gps_interval",
+                    icon="mdi:map-marker-distance",
+                    cmd_code=gps_code,
+                    value_map=value_map,
+                    current_option=current,
+                )
+            )
+
+        # Profile / scene mode
+        if coordinator.device_supports(uuid, CMD_PROFILE_MODE):
+            discovered_opts = coordinator.get_command_options(uuid, CMD_PROFILE_MODE)
+            if discovered_opts:
+                value_map = {
+                    o["value"]: o["label"] for o in discovered_opts
+                }
+                current = next(
+                    (o["label"] for o in discovered_opts if o.get("checked")),
+                    None,
+                )
+            else:
+                value_map = PROFILE_MODE_OPTIONS_FALLBACK
+                current = None
+            entities.append(
+                One2TrackDynamicSelect(
+                    coordinator, uuid,
+                    key="profile_mode",
+                    translation_key="profile_mode",
+                    icon="mdi:bell-cog",
+                    cmd_code=CMD_PROFILE_MODE,
+                    value_map=value_map,
+                    current_option=current,
+                )
+            )
+
+    async_add_entities(entities)
 
 
-class One2TrackSelect(One2TrackEntity, SelectEntity):
-    """A select entity for a One2Track device setting."""
+class One2TrackDynamicSelect(One2TrackEntity, SelectEntity):
+    """A select entity for a One2Track device setting.
 
-    entity_description: One2TrackSelectDescription
+    Created dynamically based on discovered capabilities — the command code
+    and option values are determined at runtime, not hardcoded.
+    """
+
+    _attr_assumed_state = True
 
     def __init__(
         self,
         coordinator: One2TrackCoordinator,
         uuid: str,
-        description: One2TrackSelectDescription,
+        *,
+        key: str,
+        translation_key: str,
+        icon: str,
+        cmd_code: str,
+        value_map: dict[str, str],
+        current_option: str | None = None,
     ) -> None:
         """Initialize the select."""
         super().__init__(coordinator, uuid)
-        self.entity_description = description
-        self._attr_unique_id = f"{uuid}_{description.key}"
-        self._label_to_value = {v: k for k, v in description.value_map.items()}
-        self._attr_options = list(description.value_map.values())
-        self._attr_current_option = self._attr_options[0]
+        self._attr_unique_id = f"{uuid}_{key}"
+        self._attr_translation_key = translation_key
+        self._attr_icon = icon
+        self._cmd_code = cmd_code
+        self._value_map = value_map
+        self._label_to_value = {v: k for k, v in value_map.items()}
+        self._attr_options = list(value_map.values())
+        self._attr_current_option = current_option or (
+            self._attr_options[0] if self._attr_options else None
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the resolved command code for debugging."""
+        return {"cmd_code": self._cmd_code}
 
     async def async_select_option(self, option: str) -> None:
         """Send the selected setting to the watch."""
@@ -88,7 +140,7 @@ class One2TrackSelect(One2TrackEntity, SelectEntity):
         if api_value is None:
             return
         success = await self.coordinator.client.async_send_command(
-            self._uuid, self.entity_description.cmd_code, [api_value]
+            self._uuid, self._cmd_code, [api_value]
         )
         if success:
             self._attr_current_option = option
