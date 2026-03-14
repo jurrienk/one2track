@@ -24,6 +24,14 @@ force_update:
       integration: one2track
       domain: device_tracker
 
+find_device:
+  name: Find device (ring)
+  description: Make the watch play its ringtone to help locate it physically
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker
+
 intercom:
   name: Intercom (call)
   description: Make the watch immediately call the specified phone number

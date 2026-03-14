@@ -14,6 +14,7 @@ from .const import (
     CMD_ALARMS,
     CMD_CHANGE_PASSWORD,
     CMD_FACTORY_RESET,
+    CMD_FIND_DEVICE,
     CMD_INTERCOM,
     CMD_LANGUAGE_TIMEZONE,
     CMD_PHONEBOOK,
@@ -32,6 +33,7 @@ _LOGGER = logging.getLogger(__name__)
 # ── Action services (perform an action on the watch) ──────────────
 SERVICE_SEND_MESSAGE = "send_message"
 SERVICE_FORCE_UPDATE = "force_update"
+SERVICE_FIND_DEVICE = "find_device"
 SERVICE_INTERCOM = "intercom"
 
 # ── Setting services (change a watch setting) ─────────────────────
@@ -135,6 +137,16 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError("Failed to activate positioning mode")
         coordinator = _get_coordinator_for_uuid(hass, uuid)
         await coordinator.async_request_refresh()
+
+    # ── Action: Find device (ring the watch) ────────────────────
+
+    async def handle_find_device(call: ServiceCall) -> None:
+        entity_ids = _extract_entity_ids(call)
+        uuid = _resolve_device_uuid(hass, entity_ids)
+        api = _get_api_for_uuid(hass, uuid)
+        _LOGGER.info("Ringing device %s", uuid)
+        if not await api.send_command(uuid, CMD_FIND_DEVICE):
+            raise HomeAssistantError("Failed to ring device")
 
     # ── Action: Intercom (make watch call a number) ───────────────
 
@@ -288,6 +300,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         }),
     )
     hass.services.async_register(
+        DOMAIN, SERVICE_FIND_DEVICE, handle_find_device,
+        schema=vol.Schema({
+            vol.Required("entity_id"): vol.Any(str, [str]),
+        }),
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_INTERCOM, handle_intercom,
         schema=vol.Schema({
             vol.Required("entity_id"): vol.Any(str, [str]),
@@ -386,6 +404,7 @@ async def async_unload_services(hass: HomeAssistant) -> None:
     for service in (
         SERVICE_SEND_MESSAGE,
         SERVICE_FORCE_UPDATE,
+        SERVICE_FIND_DEVICE,
         SERVICE_INTERCOM,
         SERVICE_SEND_DEVICE_COMMAND,
         SERVICE_SET_SOS_NUMBER,
