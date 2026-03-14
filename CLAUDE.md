@@ -57,7 +57,3 @@ Read `TESTING.md` for the complete reference. Key diagnostic tool: the `one2trac
 ## No Tests / No CI
 
 This repo has no automated tests or CI pipeline. Changes are validated via manual testing on a live HA instance with real One2Track devices.
-
-## Forked From
-
-Originally forked from `vandernorth/one2track` (v2.0.x). Significantly rewritten in v4.0.0+. The v2.0.2 codebase is at commit `63f7b05` for historical reference, but the current command format follows the updated reverse-engineered API docs (PATCH style with `function[cmd_code]` / `function[cmd_value][]`).
