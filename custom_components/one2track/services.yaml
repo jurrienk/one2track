@@ -213,3 +213,11 @@ remote_shutdown:
     entity:
       integration: one2track
       domain: device_tracker
+
+get_raw_device_data:
+  name: Get raw device data
+  description: "Fetch raw live data from One2Track for diagnostics and testing. Returns JSON API data, HTML-scraped data, and current coordinator state."
+  target:
+    entity:
+      integration: one2track
+      domain: device_tracker

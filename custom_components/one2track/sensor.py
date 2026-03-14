@@ -58,7 +58,7 @@ SENSOR_DESCRIPTIONS: tuple[One2TrackSensorDescription, ...] = (
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
         icon="mdi:sim",
-        value_fn=lambda d: round(c / 100, 2)
+        value_fn=lambda d: round(float(c), 2)
         if (c := d.get("simcard", {}).get("balance_cents")) is not None
         else None,
     ),
@@ -133,15 +133,15 @@ SENSOR_DESCRIPTIONS: tuple[One2TrackSensorDescription, ...] = (
         native_unit_of_measurement="\u00b0",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:compass",
-        value_fn=lambda d: _meta(d).get("course"),
+        value_fn=lambda d: _meta(d).get("course")
+        if _loc(d).get("satellite_count", 0) and _loc(d).get("satellite_count", 0) > 0
+        else None,
     ),
     One2TrackSensorDescription(
         key="status",
         translation_key="status",
-        device_class=SensorDeviceClass.ENUM,
-        options=["online", "offline"],
         icon="mdi:access-point-network",
-        value_fn=lambda d: v.lower() if (v := d.get("status")) else None,
+        value_fn=lambda d: str(v).lower() if (v := d.get("status")) else None,
     ),
 )
 

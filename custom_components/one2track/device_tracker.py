@@ -117,5 +117,5 @@ class One2TrackDeviceTracker(One2TrackEntity, TrackerEntity):
         }
         if simcard:
             attrs["tariff_type"] = simcard.get("tariff_type")
-            attrs["balance_cents"] = simcard.get("balance_cents")
+            attrs["balance_eur"] = simcard.get("balance_cents")
         return attrs

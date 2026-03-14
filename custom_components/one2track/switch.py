@@ -34,6 +34,7 @@ class One2TrackStepCounterSwitch(One2TrackEntity, SwitchEntity):
 
     _attr_translation_key = "step_counter"
     _attr_icon = "mdi:shoe-print"
+    _attr_assumed_state = True
 
     def __init__(self, coordinator, uuid: str) -> None:
         """Initialize the switch."""

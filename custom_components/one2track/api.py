@@ -417,6 +417,50 @@ class One2TrackApiClient:
 
         return resp.status == 200
 
+    # ── Raw data (for diagnostics / testing) ───────────────────────
+
+    async def async_get_raw_device_data(self, uuid: str) -> dict[str, Any]:
+        """Fetch raw live data for a device from all sources.
+
+        Returns a dict with:
+        - json_api: raw device data from the JSON discovery endpoint
+        - html_scraped: device + last_location from the HTML page
+        - account_id: the resolved account ID
+        """
+        await self._async_ensure_authenticated()
+
+        result: dict[str, Any] = {"account_id": self._account_id}
+
+        # 1. Fresh JSON from the device list endpoint
+        try:
+            url = f"{BASE_URL}/users/{self._account_id}/devices"
+            async with async_timeout.timeout(15):
+                resp = await self._session.get(
+                    url,
+                    headers={"Accept": "application/json", "content-type": "application/json"},
+                    cookies=self._cookies(),
+                )
+            if resp.status == 200:
+                body = await resp.text()
+                if body and not body.lstrip().startswith(("<", "<!DOCTYPE")):
+                    data = json.loads(body)
+                    for item in data:
+                        dev = item.get("device", {})
+                        if dev.get("uuid") == uuid:
+                            result["json_api"] = item
+                            break
+        except Exception as exc:  # noqa: BLE001
+            result["json_api_error"] = str(exc)
+
+        # 2. HTML-scraped data from the device page
+        try:
+            state = await self.async_get_device_state(uuid)
+            result["html_scraped"] = state
+        except Exception as exc:  # noqa: BLE001
+            result["html_scraped_error"] = str(exc)
+
+        return result
+
     # ── Helpers ─────────────────────────────────────────────────────
 
     def _cookies(self) -> dict[str, str]:
