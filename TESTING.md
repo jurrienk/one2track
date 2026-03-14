@@ -1,6 +1,6 @@
 # One2Track Integration — Testing & Architecture Reference
 
-> **Version:** 4.1.1
+> **Version:** 4.1.0
 > **Integration domain:** `one2track`
 > **Source:** `custom_components/one2track/`
 
@@ -111,21 +111,21 @@ Each physical device (watch) creates the following HA entities. **Entities for m
 - `location_type` (GPS/WIFI/LBS), `address`, `altitude`
 - `signal_strength`, `satellite_count`
 - `last_communication`, `last_location_update`
-- `tariff_type`, `balance_eur` (from simcard data — the API field `balance_cents` contains cents, divided by 100 for euros)
+- `tariff_type`, `balance_eur` (from simcard data — the API field is called `balance_cents` but contains euro values)
 
 ### Sensors
 
 | Key | Entity suffix | Source field | Unit | Notes |
 |-----|--------------|-------------|------|-------|
 | `battery` | `_battery` | `last_location.battery_percentage` | % | Standard battery device class |
-| `sim_balance` | `_sim_balance` | `simcard.balance_cents` | EUR | **Value is cents — divided by 100 for display** |
+| `sim_balance` | `_sim_balance` | `simcard.balance_cents` | EUR | **Value is euros despite API field name** |
 | `last_location_update` | `_last_location_update` | `last_location.last_location_update` | timestamp | ISO format |
 | `last_communication` | `_last_communication` | `last_location.last_communication` | timestamp | ISO format |
 | `signal_strength` | `_signal_strength` | `last_location.signal_strength` | % | |
 | `satellite_count` | `_satellite_count` | `last_location.satellite_count` | count | 0 = no GPS fix |
 | `speed` | `_speed` | `last_location.speed` | km/h | |
 | `altitude` | `_altitude` | `last_location.altitude` | m | |
-| `steps_today` | `_steps_today` | `last_location.step_count_day` | steps | Resets daily, state_class=measurement |
+| `steps_today` | `_steps_today` | `last_location.step_count_day` | steps | Resets daily |
 | `accuracy` | `_accuracy` | `last_location.meta_data.accuracy_meters` | m | GPS accuracy radius |
 | `heading` | `_heading` | `last_location.meta_data.course` | deg | Returns `unknown` when satellite_count is 0 |
 | `status` | `_status` | `device.status` | string | Plain text (e.g. "online", "offline") |
@@ -353,7 +353,7 @@ All device commands use the Rails PATCH convention:
 
 4. **HTML scraping is fragile.** Parses `var device = {...}` and `var last_location = {...}` from inline JavaScript. Site changes could break silently.
 
-5. **The `balance_cents` API field contains cents.** It is divided by 100 and exposed as `balance_eur` on the device tracker and in euros on the `sim_balance` sensor.
+5. **The `balance_cents` API field contains euros, not cents.** The attribute is named `balance_eur` and the `sim_balance` sensor displays the value directly.
 
 6. **Heading reads `unknown` when satellite_count is 0.** Intentional — no GPS fix means no real heading data.
 

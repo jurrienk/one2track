@@ -117,6 +117,5 @@ class One2TrackDeviceTracker(One2TrackEntity, TrackerEntity):
         }
         if simcard:
             attrs["tariff_type"] = simcard.get("tariff_type")
-            raw = simcard.get("balance_cents")
-            attrs["balance_eur"] = round(float(raw) / 100, 2) if raw is not None else None
+            attrs["balance_eur"] = simcard.get("balance_cents")
         return attrs
