@@ -345,30 +345,30 @@ class One2TrackApiClient:
     ) -> bool:
         """Send a command to a device.
 
-        Uses PATCH /devices/{uuid}/functions with form-encoded data.
-        cmd_values is a list sent as repeated function[cmd_value][] fields.
+        Uses POST /api/devices/{uuid}/functions with form-encoded data.
         """
         await self._async_ensure_authenticated()
         csrf = await self._async_refresh_csrf()
 
-        url = f"{BASE_URL}/devices/{uuid}/functions"
+        url = f"{BASE_URL}/api/devices/{uuid}/functions"
 
-        form_data: list[tuple[str, str]] = [
-            ("utf8", "\u2713"),
-            ("_method", "patch"),
-            ("authenticity_token", csrf),
-            ("function[cmd_code]", cmd_code),
-        ]
+        form_data: dict[str, str] = {
+            "utf8": "\u2713",
+            "function[code]": cmd_code,
+        }
         if cmd_values:
-            for val in cmd_values:
-                form_data.append(("function[cmd_value][]", val))
+            form_data["function[value]"] = ",".join(cmd_values)
 
         try:
             async with async_timeout.timeout(15):
                 resp = await self._session.post(
                     url,
                     data=form_data,
-                    headers={"content-type": "application/x-www-form-urlencoded"},
+                    headers={
+                        "x-csrf-token": csrf,
+                        "x-requested-with": "XMLHttpRequest",
+                        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    },
                     cookies=self._cookies(),
                 )
         except TimeoutError as exc:
