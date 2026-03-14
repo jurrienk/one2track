@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
-from aiohttp import ClientError
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from typing import TYPE_CHECKING
 
-from .api import AuthenticationError, One2TrackAPI
-from .const import CONF_ID, CONF_PASSWORD, CONF_USER_NAME, DOMAIN, LOGGER
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+from .api import (
+    One2TrackApiClient,
+    One2TrackApiClientAuthenticationError,
+    One2TrackApiClientCommunicationError,
+)
+from .const import DOMAIN, LOGGER
 from .coordinator import One2TrackCoordinator
+from .data import One2TrackData
 from .services import async_setup_services, async_unload_services
 
-PLATFORMS = [
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
+    from .data import One2TrackConfigEntry
+
+PLATFORMS: list[Platform] = [
     Platform.DEVICE_TRACKER,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
@@ -24,49 +32,56 @@ PLATFORMS = [
 ]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: One2TrackConfigEntry,
+) -> bool:
     """Set up One2Track from a config entry."""
-    session = async_create_clientsession(hass)
-    api = One2TrackAPI(
-        username=entry.data[CONF_USER_NAME],
+    client = One2TrackApiClient(
+        username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
-        session=session,
+        session=async_get_clientsession(hass),
     )
 
-    try:
-        account_id = await api.authenticate()
-    except (ClientError, AuthenticationError) as ex:
-        LOGGER.error("Could not authenticate with One2Track")
-        raise ConfigEntryNotReady from ex
+    await client.async_authenticate()
 
-    coordinator = One2TrackCoordinator(hass, api)
-
-    try:
-        await coordinator.async_setup()
-    except (ClientError, AuthenticationError) as ex:
-        LOGGER.error("Could not discover One2Track devices")
-        raise ConfigEntryNotReady from ex
-
+    coordinator = One2TrackCoordinator(hass, client)
+    await coordinator.async_setup()
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {
-        "api": api,
-        "coordinator": coordinator,
-    }
+    entry.runtime_data = One2TrackData(
+        client=client,
+        coordinator=coordinator,
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_setup_services(hass)
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant,
+    entry: One2TrackConfigEntry,
+) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-        if not hass.data[DOMAIN]:
-            await async_unload_services(hass)
+
+    # Only unload services if no other entries remain
+    remaining = [
+        e for e in hass.config_entries.async_entries(DOMAIN)
+        if e.entry_id != entry.entry_id
+    ]
+    if not remaining:
+        await async_unload_services(hass)
 
     return unload_ok
+
+
+async def async_reload_entry(
+    hass: HomeAssistant,
+    entry: One2TrackConfigEntry,
+) -> None:
+    """Reload config entry."""
+    await hass.config_entries.async_reload(entry.entry_id)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -13,20 +13,22 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfLength, UnitOfSpeed
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
-from .coordinator import One2TrackCoordinator
+from .entity import One2TrackEntity
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+    from .coordinator import One2TrackCoordinator
+    from .data import One2TrackConfigEntry
 
 
 @dataclass(frozen=True, kw_only=True)
 class One2TrackSensorDescription(SensorEntityDescription):
     """Describes a One2Track sensor."""
+
     value_fn: Callable[[dict[str, Any]], Any]
 
 
@@ -40,7 +42,7 @@ def _meta(data: dict) -> dict:
     return m if isinstance(m, dict) else {}
 
 
-SENSOR_DESCRIPTIONS: list[One2TrackSensorDescription] = [
+SENSOR_DESCRIPTIONS: tuple[One2TrackSensorDescription, ...] = (
     One2TrackSensorDescription(
         key="battery",
         translation_key="battery",
@@ -56,19 +58,25 @@ SENSOR_DESCRIPTIONS: list[One2TrackSensorDescription] = [
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
         icon="mdi:sim",
-        value_fn=lambda d: round(c / 100, 2) if (c := d.get("simcard", {}).get("balance_cents")) is not None else None,
+        value_fn=lambda d: round(c / 100, 2)
+        if (c := d.get("simcard", {}).get("balance_cents")) is not None
+        else None,
     ),
     One2TrackSensorDescription(
         key="last_location_update",
         translation_key="last_location_update",
         device_class=SensorDeviceClass.TIMESTAMP,
-        value_fn=lambda d: datetime.fromisoformat(v) if (v := _loc(d).get("last_location_update")) else None,
+        value_fn=lambda d: datetime.fromisoformat(v)
+        if (v := _loc(d).get("last_location_update"))
+        else None,
     ),
     One2TrackSensorDescription(
         key="last_communication",
         translation_key="last_communication",
         device_class=SensorDeviceClass.TIMESTAMP,
-        value_fn=lambda d: datetime.fromisoformat(v) if (v := _loc(d).get("last_communication")) else None,
+        value_fn=lambda d: datetime.fromisoformat(v)
+        if (v := _loc(d).get("last_communication"))
+        else None,
     ),
     One2TrackSensorDescription(
         key="signal_strength",
@@ -122,7 +130,7 @@ SENSOR_DESCRIPTIONS: list[One2TrackSensorDescription] = [
     One2TrackSensorDescription(
         key="heading",
         translation_key="heading",
-        native_unit_of_measurement="°",
+        native_unit_of_measurement="\u00b0",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:compass",
         value_fn=lambda d: _meta(d).get("course"),
@@ -135,31 +143,27 @@ SENSOR_DESCRIPTIONS: list[One2TrackSensorDescription] = [
         icon="mdi:access-point-network",
         value_fn=lambda d: v.lower() if (v := d.get("status")) else None,
     ),
-]
+)
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
+    hass: HomeAssistant,  # noqa: ARG001
+    entry: One2TrackConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up One2Track sensor entities."""
-    coordinator: One2TrackCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-
-    entities = []
-    for device in coordinator.device_list:
-        uuid = device["uuid"]
-        for desc in SENSOR_DESCRIPTIONS:
-            entities.append(One2TrackSensor(coordinator, uuid, desc))
-
-    async_add_entities(entities)
+    coordinator = entry.runtime_data.coordinator
+    async_add_entities(
+        One2TrackSensor(coordinator, device["uuid"], desc)
+        for device in coordinator.device_list
+        for desc in SENSOR_DESCRIPTIONS
+    )
 
 
-class One2TrackSensor(CoordinatorEntity[One2TrackCoordinator], SensorEntity):
+class One2TrackSensor(One2TrackEntity, SensorEntity):
     """A sensor for One2Track device data."""
 
     entity_description: One2TrackSensorDescription
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -167,21 +171,12 @@ class One2TrackSensor(CoordinatorEntity[One2TrackCoordinator], SensorEntity):
         uuid: str,
         description: One2TrackSensorDescription,
     ) -> None:
-        super().__init__(coordinator)
+        """Initialize the sensor."""
+        super().__init__(coordinator, uuid)
         self.entity_description = description
-        self._uuid = uuid
         self._attr_unique_id = f"{uuid}_{description.key}"
 
     @property
-    def device_info(self) -> DeviceInfo:
-        data = self.coordinator.get_device_data(self._uuid)
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._uuid)},
-            serial_number=data.get("serial_number"),
-            name=data.get("name", self._uuid),
-        )
-
-    @property
     def native_value(self) -> Any:
-        data = self.coordinator.get_device_data(self._uuid)
-        return self.entity_description.value_fn(data)
+        """Return the sensor value."""
+        return self.entity_description.value_fn(self._data)

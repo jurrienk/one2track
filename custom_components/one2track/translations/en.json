@@ -3,22 +3,21 @@
     "config": {
         "step": {
             "user": {
-                "title": "One2Track Login Information",
+                "title": "One2Track Login",
                 "data": {
-                    "Username": "Username",
-                    "Password": "Password"
+                    "username": "Username",
+                    "password": "Password"
                 },
-                "description": "Please enter the username/password used in the one2track app or website."
+                "description": "Enter your One2Track account credentials."
             }
         },
         "error": {
-            "cannot_connect": "Failed to connect",
-            "invalid_auth": "Invalid authentication",
-            "authentication_error": "Invalid username or password. Please verify with www.one2trackgps.com/",
+            "auth": "Invalid username or password",
+            "connection": "Unable to connect to One2Track",
             "unknown": "Unexpected error"
         },
         "abort": {
-            "already_configured": "Device is already configured"
+            "already_configured": "Account is already configured"
         }
     },
     "entity": {

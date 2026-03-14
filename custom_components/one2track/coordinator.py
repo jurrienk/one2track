@@ -1,20 +1,25 @@
-"""DataUpdateCoordinator for One2Track."""
+"""DataUpdateCoordinator for the One2Track integration."""
 
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from aiohttp import ClientError
-from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import AuthenticationError, One2TrackAPI
-from .const import DEFAULT_UPDATE_INTERVAL_SECONDS
+from .api import (
+    One2TrackApiClientAuthenticationError,
+    One2TrackApiClientError,
+)
+from .const import DEFAULT_UPDATE_INTERVAL_SECONDS, LOGGER
 
-_LOGGER = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
+    from .api import One2TrackApiClient
+    from .data import One2TrackConfigEntry
 
 
 class One2TrackCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -25,15 +30,18 @@ class One2TrackCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     discovery metadata (serial_number, name, simcard, etc.).
     """
 
-    def __init__(self, hass: HomeAssistant, api: One2TrackAPI) -> None:
+    config_entry: One2TrackConfigEntry
+
+    def __init__(self, hass: HomeAssistant, client: One2TrackApiClient) -> None:
+        """Initialize the coordinator."""
         super().__init__(
             hass,
-            _LOGGER,
+            LOGGER,
             name="One2Track",
             update_interval=timedelta(seconds=DEFAULT_UPDATE_INTERVAL_SECONDS),
             always_update=False,
         )
-        self.api = api
+        self.client = client
         self._device_list: list[dict[str, Any]] = []
 
     @property
@@ -43,7 +51,7 @@ class One2TrackCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     async def async_setup(self) -> None:
         """Discover devices during initial setup."""
-        self._device_list = await self.api.discover_devices()
+        self._device_list = await self.client.async_discover_devices()
 
     def get_device_data(self, uuid: str) -> dict[str, Any]:
         """Get merged device data for a UUID.
@@ -51,14 +59,12 @@ class One2TrackCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         Merges the initial JSON discovery data with the scraped HTML data.
         The HTML-scraped data takes precedence for overlapping fields.
         """
-        # Start with JSON discovery data as base
         base: dict[str, Any] = {}
         for dev in self._device_list:
             if dev.get("uuid") == uuid:
                 base = dict(dev)
                 break
 
-        # Overlay HTML-scraped data
         if self.data and uuid in self.data:
             scraped = self.data[uuid]
             if "device" in scraped:
@@ -72,9 +78,8 @@ class One2TrackCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         """Fetch device states from One2Track."""
         try:
             async with asyncio.timeout(60):
-                states = await self.api.get_all_device_states()
-                _LOGGER.debug("Updated %d devices", len(states))
-                return states
-        except (ClientError, AuthenticationError, TimeoutError) as err:
-            _LOGGER.error("Error updating from One2Track: %s", err)
-            raise UpdateFailed(f"Error communicating with One2Track: {err}") from err
+                return await self.client.async_get_all_device_states()
+        except One2TrackApiClientAuthenticationError as exc:
+            raise ConfigEntryAuthFailed(exc) from exc
+        except One2TrackApiClientError as exc:
+            raise UpdateFailed(exc) from exc

@@ -1,31 +1,44 @@
 """One2Track API client.
 
-Communicates with app.one2track.com / www.one2trackgps.com via session-based
-authentication, HTML scraping for device state, and form POSTs for commands.
+Communicates with www.one2trackgps.com via session-based authentication,
+HTML scraping for device state, and form POSTs for commands.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import re
+import socket
 from typing import Any
 
-from aiohttp import ClientSession
+import aiohttp
+import async_timeout
 
 from .const import BASE_URL, LOGIN_URL, SESSION_COOKIE
 
-_LOGGER = logging.getLogger(__name__)
+
+class One2TrackApiClientError(Exception):
+    """Base exception for One2Track API errors."""
 
 
-class AuthenticationError(Exception):
-    """Raised when login fails or session expires."""
+class One2TrackApiClientCommunicationError(One2TrackApiClientError):
+    """Exception for network/communication errors."""
 
 
-class One2TrackAPI:
+class One2TrackApiClientAuthenticationError(One2TrackApiClientError):
+    """Exception for authentication failures."""
+
+
+class One2TrackApiClient:
     """Client for the One2Track web application."""
 
-    def __init__(self, username: str, password: str, session: ClientSession) -> None:
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        session: aiohttp.ClientSession,
+    ) -> None:
+        """Initialize the API client."""
         self._username = username
         self._password = password
         self._session = session
@@ -36,30 +49,49 @@ class One2TrackAPI:
 
     @property
     def account_id(self) -> str:
+        """Return the discovered account ID."""
         return self._account_id
 
     # ── Authentication ──────────────────────────────────────────────
 
-    async def authenticate(self) -> str:
-        """Full login flow. Returns account_id."""
-        await self._fetch_csrf()
-        await self._login()
-        await self._discover_account_id()
+    async def async_authenticate(self) -> str:
+        """Full login flow. Returns account_id.
+
+        Raises:
+            One2TrackApiClientAuthenticationError: If credentials are invalid.
+            One2TrackApiClientCommunicationError: If network errors occur.
+        """
+        await self._async_fetch_csrf()
+        await self._async_login()
+        await self._async_discover_account_id()
         return self._account_id
 
-    async def _fetch_csrf(self) -> None:
+    async def _async_fetch_csrf(self) -> None:
         """Get CSRF token and initial session cookie from login page."""
-        resp = await self._session.get(
-            LOGIN_URL,
-            cookies={"accepted_cookies": "true"},
-        )
+        try:
+            async with async_timeout.timeout(10):
+                resp = await self._session.get(
+                    LOGIN_URL,
+                    cookies={"accepted_cookies": "true"},
+                )
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                "Timeout fetching login page"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error fetching login page: {exc}"
+            ) from exc
+
         if resp.status != 200:
-            raise AuthenticationError(f"Login page returned {resp.status}")
+            raise One2TrackApiClientCommunicationError(
+                f"Login page returned {resp.status}"
+            )
         html = await resp.text()
         self._csrf = self._parse_csrf(html)
         self._cookie = self._parse_cookie(resp)
 
-    async def _login(self) -> None:
+    async def _async_login(self) -> None:
         """Submit login form."""
         data = {
             "authenticity_token": self._csrf,
@@ -68,45 +100,81 @@ class One2TrackAPI:
             "gdpr": "1",
             "user[remember_me]": "1",
         }
-        resp = await self._session.post(
-            LOGIN_URL,
-            data=data,
-            headers={"content-type": "application/x-www-form-urlencoded"},
-            cookies=self._cookies(),
-            allow_redirects=False,
-        )
+        try:
+            async with async_timeout.timeout(10):
+                resp = await self._session.post(
+                    LOGIN_URL,
+                    data=data,
+                    headers={"content-type": "application/x-www-form-urlencoded"},
+                    cookies=self._cookies(),
+                    allow_redirects=False,
+                )
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                "Timeout during login"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error during login: {exc}"
+            ) from exc
+
         if resp.status == 302 and "Set-Cookie" in resp.headers:
             self._cookie = self._parse_cookie(resp)
-            _LOGGER.debug("Login successful")
         else:
-            raise AuthenticationError("Invalid username or password")
+            raise One2TrackApiClientAuthenticationError(
+                "Invalid username or password"
+            )
 
-    async def _discover_account_id(self) -> None:
+    async def _async_discover_account_id(self) -> None:
         """Follow redirect from base URL to discover account ID."""
-        resp = await self._session.get(
-            BASE_URL + "/",
-            cookies=self._cookies(),
-            allow_redirects=False,
-        )
+        try:
+            async with async_timeout.timeout(10):
+                resp = await self._session.get(
+                    BASE_URL + "/",
+                    cookies=self._cookies(),
+                    allow_redirects=False,
+                )
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                "Timeout discovering account"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error discovering account: {exc}"
+            ) from exc
+
         if resp.status == 302 and "Location" in resp.headers:
-            # Location: /users/<account_id>/devices
             parts = resp.headers["Location"].split("/")
             if len(parts) >= 3:
                 self._account_id = parts[2]
-                _LOGGER.debug("Discovered account ID: %s", self._account_id)
                 return
-        raise AuthenticationError("Could not discover account ID after login")
+        raise One2TrackApiClientAuthenticationError(
+            "Could not discover account ID after login"
+        )
 
-    async def _ensure_authenticated(self) -> None:
+    async def _async_ensure_authenticated(self) -> None:
         """Re-authenticate if session is missing."""
         if not self._cookie:
-            await self.authenticate()
+            await self.async_authenticate()
 
-    async def _refresh_csrf(self) -> str:
-        """Get a fresh CSRF token from any page."""
-        resp = await self._session.get(LOGIN_URL, cookies=self._cookies())
+    async def _async_refresh_csrf(self) -> str:
+        """Get a fresh CSRF token from login page."""
+        try:
+            async with async_timeout.timeout(10):
+                resp = await self._session.get(LOGIN_URL, cookies=self._cookies())
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                "Timeout refreshing CSRF"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error refreshing CSRF: {exc}"
+            ) from exc
+
         if resp.status != 200:
-            raise AuthenticationError("Could not refresh CSRF token")
+            raise One2TrackApiClientAuthenticationError(
+                "Could not refresh CSRF token"
+            )
         html = await resp.text()
         new_cookie = self._parse_cookie(resp)
         if new_cookie:
@@ -116,46 +184,77 @@ class One2TrackAPI:
 
     # ── Device Discovery ────────────────────────────────────────────
 
-    async def discover_devices(self) -> list[dict[str, Any]]:
-        """Discover devices via JSON endpoint. Returns list of device dicts."""
-        await self._ensure_authenticated()
+    async def async_discover_devices(self) -> list[dict[str, Any]]:
+        """Discover devices via JSON endpoint.
+
+        Returns list of device dicts with uuid, name, serial_number, etc.
+        """
+        await self._async_ensure_authenticated()
         url = f"{BASE_URL}/users/{self._account_id}/devices"
-        resp = await self._session.get(
-            url,
-            headers={
-                "Accept": "application/json",
-                "content-type": "application/json",
-            },
-            cookies=self._cookies(),
-        )
-        if resp.status != 200:
+
+        try:
+            async with async_timeout.timeout(15):
+                resp = await self._session.get(
+                    url,
+                    headers={
+                        "Accept": "application/json",
+                        "content-type": "application/json",
+                    },
+                    cookies=self._cookies(),
+                )
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                "Timeout fetching device list"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error fetching device list: {exc}"
+            ) from exc
+
+        if resp.status in (401, 302):
             self._cookie = ""
-            raise AuthenticationError(f"Device list returned {resp.status}")
+            raise One2TrackApiClientAuthenticationError(
+                f"Device list returned {resp.status}"
+            )
+        if resp.status != 200:
+            raise One2TrackApiClientCommunicationError(
+                f"Device list returned {resp.status}"
+            )
 
         data = await resp.json(content_type=None)
         devices = [item["device"] for item in data]
         self._device_uuids = [d["uuid"] for d in devices]
-        _LOGGER.debug("Discovered %d devices", len(devices))
         return devices
 
     # ── Device State (HTML scraping) ────────────────────────────────
 
-    async def get_device_state(self, uuid: str) -> dict[str, Any]:
-        """Fetch rich device state by scraping the device HTML page.
+    async def async_get_device_state(self, uuid: str) -> dict[str, Any]:
+        """Fetch rich device state by scraping the per-device HTML page.
 
-        Returns a dict with 'device' and 'last_location' keys parsed from
-        the inline JavaScript variables.
+        Returns a dict with 'device' and 'last_location' keys.
         """
-        await self._ensure_authenticated()
+        await self._async_ensure_authenticated()
         url = f"{BASE_URL}/devices/{uuid}"
-        resp = await self._session.get(url, cookies=self._cookies())
 
+        try:
+            async with async_timeout.timeout(15):
+                resp = await self._session.get(url, cookies=self._cookies())
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Timeout fetching device {uuid}"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error fetching device {uuid}: {exc}"
+            ) from exc
+
+        if resp.status in (401, 302):
+            self._cookie = ""
+            raise One2TrackApiClientAuthenticationError("Session expired")
         if resp.status != 200:
-            if resp.status in (401, 302):
-                self._cookie = ""
-                raise AuthenticationError("Session expired")
-            _LOGGER.error("Device page for %s returned %s", uuid, resp.status)
-            return {}
+            raise One2TrackApiClientCommunicationError(
+                f"Device page for {uuid} returned {resp.status}"
+            )
 
         html = await resp.text()
         return self._parse_device_page(html, uuid)
@@ -169,7 +268,7 @@ class One2TrackAPI:
             try:
                 result["device"] = json.loads(device_match.group(1))
             except json.JSONDecodeError:
-                _LOGGER.warning("Failed to parse device JSON for %s", uuid)
+                pass
 
         location_match = re.search(
             r"var last_location\s*=\s*(\{.*?\})\s*;", html, re.DOTALL
@@ -178,28 +277,26 @@ class One2TrackAPI:
             try:
                 result["last_location"] = json.loads(location_match.group(1))
             except json.JSONDecodeError:
-                _LOGGER.warning("Failed to parse last_location JSON for %s", uuid)
+                pass
 
         return result
 
-    async def get_all_device_states(self) -> dict[str, dict[str, Any]]:
+    async def async_get_all_device_states(self) -> dict[str, dict[str, Any]]:
         """Fetch state for all known devices. Returns {uuid: state_dict}."""
-        await self._ensure_authenticated()
+        await self._async_ensure_authenticated()
 
         if not self._device_uuids:
-            devices = await self.discover_devices()
-            self._device_uuids = [d["uuid"] for d in devices]
+            await self.async_discover_devices()
 
         states: dict[str, dict[str, Any]] = {}
         for uuid in self._device_uuids:
             try:
-                state = await self.get_device_state(uuid)
+                state = await self.async_get_device_state(uuid)
                 if state:
                     states[uuid] = state
-            except AuthenticationError:
-                # Session expired mid-loop, re-auth and retry this device
-                await self.authenticate()
-                state = await self.get_device_state(uuid)
+            except One2TrackApiClientAuthenticationError:
+                await self.async_authenticate()
+                state = await self.async_get_device_state(uuid)
                 if state:
                     states[uuid] = state
 
@@ -207,20 +304,22 @@ class One2TrackAPI:
 
     # ── Commands (settings & actions) ───────────────────────────────
 
-    async def send_command(
-        self, uuid: str, cmd_code: str, cmd_values: list[str] | None = None
+    async def async_send_command(
+        self,
+        uuid: str,
+        cmd_code: str,
+        cmd_values: list[str] | None = None,
     ) -> bool:
         """Send a command to a device.
 
         Uses PATCH /devices/{uuid}/functions with form-encoded data.
-        cmd_values is a list of values sent as repeated function[cmd_value][] fields.
+        cmd_values is a list sent as repeated function[cmd_value][] fields.
         """
-        await self._ensure_authenticated()
-        csrf = await self._refresh_csrf()
+        await self._async_ensure_authenticated()
+        csrf = await self._async_refresh_csrf()
 
         url = f"{BASE_URL}/devices/{uuid}/functions"
 
-        # Build form data as list of tuples to support repeated keys
         form_data: list[tuple[str, str]] = [
             ("utf8", "\u2713"),
             ("_method", "patch"),
@@ -231,25 +330,31 @@ class One2TrackAPI:
             for val in cmd_values:
                 form_data.append(("function[cmd_value][]", val))
 
-        resp = await self._session.post(
-            url,
-            data=form_data,
-            headers={"content-type": "application/x-www-form-urlencoded"},
-            cookies=self._cookies(),
-        )
-        success = resp.status == 200
-        if not success:
-            _LOGGER.error(
-                "Command %s to %s failed with status %s", cmd_code, uuid, resp.status
-            )
-        return success
+        try:
+            async with async_timeout.timeout(15):
+                resp = await self._session.post(
+                    url,
+                    data=form_data,
+                    headers={"content-type": "application/x-www-form-urlencoded"},
+                    cookies=self._cookies(),
+                )
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Timeout sending command {cmd_code} to {uuid}"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error sending command {cmd_code} to {uuid}: {exc}"
+            ) from exc
+
+        return resp.status == 200
 
     # ── Messages ────────────────────────────────────────────────────
 
-    async def send_message(self, uuid: str, message: str) -> bool:
+    async def async_send_message(self, uuid: str, message: str) -> bool:
         """Send a text message to a device."""
-        await self._ensure_authenticated()
-        csrf = await self._refresh_csrf()
+        await self._async_ensure_authenticated()
+        csrf = await self._async_refresh_csrf()
 
         url = f"{BASE_URL}/devices/{uuid}/messages"
         data = {
@@ -262,9 +367,21 @@ class One2TrackAPI:
             "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
             "accept": "text/vnd.turbo-stream.html, text/html, application/xhtml+xml",
         }
-        resp = await self._session.post(
-            url, data=data, headers=headers, cookies=self._cookies()
-        )
+
+        try:
+            async with async_timeout.timeout(15):
+                resp = await self._session.post(
+                    url, data=data, headers=headers, cookies=self._cookies()
+                )
+        except TimeoutError as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Timeout sending message to {uuid}"
+            ) from exc
+        except (aiohttp.ClientError, socket.gaierror) as exc:
+            raise One2TrackApiClientCommunicationError(
+                f"Error sending message to {uuid}: {exc}"
+            ) from exc
+
         return resp.status == 200
 
     # ── Helpers ─────────────────────────────────────────────────────
@@ -280,17 +397,15 @@ class One2TrackAPI:
         match = re.search(r'name="csrf-token"\s+content="([^"]+)"', html)
         if match:
             return match.group(1)
-        # Fallback: try authenticity_token hidden field
         match = re.search(r'name="authenticity_token"[^>]+value="([^"]+)"', html)
         if match:
             return match.group(1)
-        raise AuthenticationError("CSRF token not found")
+        raise One2TrackApiClientAuthenticationError("CSRF token not found")
 
     @staticmethod
-    def _parse_cookie(response) -> str:
+    def _parse_cookie(response: aiohttp.ClientResponse) -> str:
         set_cookie = response.headers.get("Set-Cookie", "")
         if SESSION_COOKIE in set_cookie:
-            # Extract cookie value: _iadmin=VALUE; path=...
             part = set_cookie.split(SESSION_COOKIE + "=")[1]
             return part.split(";")[0]
         return ""

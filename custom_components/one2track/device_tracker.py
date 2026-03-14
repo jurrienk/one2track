@@ -2,80 +2,54 @@
 
 from __future__ import annotations
 
-import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.components.zone import async_active_zone
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import One2TrackCoordinator
+from .entity import One2TrackEntity
 
-_LOGGER = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+    from .data import One2TrackConfigEntry
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: One2TrackConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up One2Track device trackers."""
-    coordinator: One2TrackCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-
+    coordinator = entry.runtime_data.coordinator
     async_add_entities(
-        [
-            One2TrackDeviceTracker(coordinator, hass, device)
-            for device in coordinator.device_list
-        ]
+        One2TrackDeviceTracker(coordinator, hass, device["uuid"])
+        for device in coordinator.device_list
     )
 
 
-class One2TrackDeviceTracker(CoordinatorEntity[One2TrackCoordinator], TrackerEntity):
+class One2TrackDeviceTracker(One2TrackEntity, TrackerEntity):
     """A device tracker for a One2Track watch."""
 
-    _attr_has_entity_name = True
     _attr_name = None
     _attr_icon = "mdi:watch-variant"
 
-    def __init__(
-        self,
-        coordinator: One2TrackCoordinator,
-        hass: HomeAssistant,
-        device: dict[str, Any],
-    ) -> None:
-        super().__init__(coordinator)
+    def __init__(self, coordinator, hass, uuid: str) -> None:
+        """Initialize the tracker."""
+        super().__init__(coordinator, uuid)
         self._hass = hass
-        self._uuid = device["uuid"]
-        self._attr_unique_id = device["uuid"]
-
-    @property
-    def _data(self) -> dict[str, Any]:
-        return self.coordinator.get_device_data(self._uuid)
-
-    @property
-    def _location(self) -> dict[str, Any]:
-        return self._data.get("last_location", {})
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        data = self._data
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._uuid)},
-            serial_number=data.get("serial_number"),
-            name=data.get("name", self._uuid),
-        )
+        self._attr_unique_id = uuid
 
     @property
     def source_type(self) -> str:
+        """Return the source type."""
         return "gps"
 
     @property
     def latitude(self) -> float | None:
+        """Return latitude."""
         val = self._location.get("latitude")
         if val is not None:
             try:
@@ -86,6 +60,7 @@ class One2TrackDeviceTracker(CoordinatorEntity[One2TrackCoordinator], TrackerEnt
 
     @property
     def longitude(self) -> float | None:
+        """Return longitude."""
         val = self._location.get("longitude")
         if val is not None:
             try:
@@ -96,6 +71,7 @@ class One2TrackDeviceTracker(CoordinatorEntity[One2TrackCoordinator], TrackerEnt
 
     @property
     def location_accuracy(self) -> float:
+        """Return the GPS accuracy in meters."""
         meta = self._location.get("meta_data")
         if isinstance(meta, dict) and "accuracy_meters" in meta:
             return meta["accuracy_meters"]
@@ -103,10 +79,12 @@ class One2TrackDeviceTracker(CoordinatorEntity[One2TrackCoordinator], TrackerEnt
 
     @property
     def battery_level(self) -> int | None:
+        """Return battery level."""
         return self._location.get("battery_percentage")
 
     @property
     def location_name(self) -> str | None:
+        """Return location name (zone or address)."""
         try:
             if self.latitude is not None and self.longitude is not None:
                 zone = async_active_zone(
@@ -120,10 +98,11 @@ class One2TrackDeviceTracker(CoordinatorEntity[One2TrackCoordinator], TrackerEnt
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """Return device-specific attributes."""
         data = self._data
         loc = self._location
         simcard = data.get("simcard", {})
-        attrs = {
+        attrs: dict[str, Any] = {
             "serial_number": data.get("serial_number"),
             "uuid": self._uuid,
             "status": data.get("status"),
